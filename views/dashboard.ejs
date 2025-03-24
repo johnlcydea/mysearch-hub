@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>MySearch Hub - Dashboard</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="container">
+    <div class="welcome-header">
+      <h1>Welcome, <span class="username"><%= user.displayName %></span>!</h1>
+      <a href="/logout" class="button">Log Out</a>
+    </div>
+
+    <form action="/dashboard" method="POST" class="search-form">
+      <label for="query">Topic Query:</label>
+      <input type="text" id="query" name="query" placeholder="Enter a topic..." required>
+      <label for="title">Topic Title:</label>
+      <input type="text" id="title" name="title" placeholder="Enter a title..." required>
+      <button type="submit" id="searchButton">Add Topic</button>
+    </form>
+
+    <div class="clear-form">
+      <form action="/clear-searches" method="POST">
+        <button type="submit" id="deleteButton">Clear All Topics</button>
+      </form>
+    </div>
+
+    <h2>Your Topics</h2>
+    <% if (searches.length === 0) { %>
+      <p>No topics saved yet. Add a topic above!</p>
+    <% } else { %>
+      <div class="search-results">
+        <% searches.forEach(search => { %>
+          <div class="search-result" data-id="<%= search.id %>">
+            <h3><%= search.title %></h3>
+            <h4>Topic: <%= search.query %></h4>
+            <p><%= search.definition %></p>
+            <div class="timestamp">
+              Added on: <%= new Date(Number(search.timestamp)).toLocaleString() %>
+            </div>
+            <div class="button-group">
+              <a href="#" class="button edit-button">Edit</a>
+              <form action="/delete/<%= search.id %>" method="POST" style="display:inline;">
+                <button type="submit" class="delete-button">Delete</button>
+              </form>
+            </div>
+          </div>
+        <% }) %>
+      </div>
+    <% } %>
+
+    <!-- Toast Notification -->
+    <div class="toast-container">
+      <% if (message) { %>
+        <div class="toast <%= messageType === 'success' ? 'toast-success' : 'toast-error' %> show">
+          <%= message %>
+        </div>
+      <% } %>
+    </div>
+
+    <!-- Modal for Editing -->
+    <div class="modal" id="editModal">
+      <div class="modal-content">
+        <span class="close">×</span>
+        <h2>Edit Topic</h2>
+        <form id="editForm" method="POST">
+          <div class="modal-input-group">
+            <label for="editTitle">Topic Title:</label>
+            <input type="text" id="editTitle" name="title" required>
+          </div>
+          <div class="modal-buttons">
+            <button type="submit" class="save-button">Save</button>
+            <button type="button" class="cancel-button close">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const searchButton = document.getElementById('searchButton');
+    searchButton.addEventListener('click', () => {
+      searchButton.classList.add('loading');
+    });
+
+    const modal = document.getElementById('editModal');
+    const closeButtons = document.querySelectorAll('.close');
+    const editButtons = document.querySelectorAll('.edit-button');
+    const editForm = document.getElementById('editForm');
+
+    editButtons.forEach(button => {
+      button.addEventListener('click', (e) => {
+        e.preventDefault();
+        const searchResult = button.closest('.search-result');
+        const id = searchResult.dataset.id;
+        const title = searchResult.querySelector('h3').textContent;
+        document.getElementById('editTitle').value = title;
+        editForm.action = `/edit/${id}`;
+        modal.style.display = 'block';
+        setTimeout(() => {
+          modal.classList.add('show');
+        }, 10);
+      });
+    });
+
+    closeButtons.forEach(button => {
+      button.addEventListener('click', () => {
+        modal.classList.remove('show');
+        setTimeout(() => {
+          modal.style.display = 'none';
+        }, 300);
+      });
+    });
+
+    window.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        modal.classList.remove('show');
+        setTimeout(() => {
+          modal.style.display = 'none';
+        }, 300);
+      }
+    });
+
+    const toast = document.querySelector('.toast');
+    if (toast) {
+      setTimeout(() => {
+        toast.classList.remove('show');
+      }, 3000);
+    }
+  </script>
+</body>
+</html>

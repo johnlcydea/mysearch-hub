@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>MySearch Hub - Login</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body class="login-page">
+  <div class="login-container">
+    <h1 class="glitch" data-text="MySearch Hub">MySearch Hub</h1>
+
+    <% if (error) { %>
+      <div class="error-message"><%= error %></div>
+    <% } %>
+    <% if (success) { %>
+      <div class="success-message"><%= success %></div>
+    <% } %>
+
+    <form action="/login" method="POST" class="login-form">
+      <div class="input-group">
+        <label for="username">Username:</label>
+        <input type="text" id="username" name="username" placeholder="Enter your username" required>
+      </div>
+      <div class="input-group">
+        <label for="password">Password:</label>
+        <input type="password" id="password" name="password" placeholder="Enter your password" required>
+      </div>
+      <button type="submit">Login</button>
+    </form>
+
+    <p>Don't have an account? <a href="/register">Register here</a></p>
+
+    <div class="divider">OR</div>
+
+    <a href="/auth/google" class="login-button">
+      <span class="google-icon">G</span> Sign in with Google
+    </a>
+  </div>
+</body>
+</html>

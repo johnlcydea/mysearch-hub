@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Edit Search</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <h1>Edit Search</h1>
+  <form action="/edit/<%= search.id %>" method="POST">
+    <label>Title: <input type="text" name="title" value="<%= search.title %>" required></label>
+    <button type="submit">Save Changes</button>
+    <a href="/dashboard" class="button">Cancel</a>
+  </form>
+</body>
+</html>
