@@ -20,7 +20,7 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'your-secret-key',
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: false } // Set to true if using HTTPS
+  cookie: { secure: false }
 }));
 
 // Passport configuration
@@ -37,8 +37,8 @@ passport.use(new GoogleStrategy({
     if (!user) {
       const newUser = {
         username: profile.id,
-        password: 'google-auth', // Placeholder, not used for Google login
-        displayName: profile.displayName // Save the displayName from Google profile
+        password: 'google-auth',
+        displayName: profile.displayName
       };
       const userId = await db.registerUser(newUser.username, newUser.password, newUser.displayName);
       user = { id: userId, ...newUser };
@@ -108,7 +108,6 @@ app.post('/login', async (req, res) => {
       return res.redirect('/login');
     }
 
-    // Set the session user
     req.session.user = { 
       id: user.id, 
       username: user.username, 
@@ -160,7 +159,6 @@ app.get('/auth/google',
 app.get('/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/login' }),
   (req, res) => {
-    // Ensure displayName is set from the user object
     req.session.user = { 
       id: req.user.id, 
       username: req.user.username, 
@@ -193,26 +191,51 @@ app.post('/dashboard', isAuthenticated, async (req, res) => {
   let definition = 'No information found'; // Default placeholder
 
   try {
-    // Wikipedia API request
-    const wikiUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`;
-    const response = await axios.get(wikiUrl);
-    // Extract the summary (extract field) from the Wikipedia API response
-    definition = response.data.extract || 'No information found';
+    // Normalize the query: capitalize first letter of each word
+    const normalizedQuery = query
+      .toLowerCase()
+      .split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
+    console.log('Normalized Wikipedia API query:', normalizedQuery);
+
+    // Try to fetch a summary directly
+    let wikiResponse = await axios.get('https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(normalizedQuery));
+    console.log('Wikipedia API direct response:', wikiResponse.data);
+
+    // If no extract is found, fall back to search
+    if (!wikiResponse.data.extract) {
+      console.log('No direct match found, falling back to search...');
+      const searchResponse = await axios.get('https://en.wikipedia.org/w/api.php', {
+        params: {
+          action: 'query',
+          list: 'search',
+          srsearch: normalizedQuery,
+          format: 'json'
+        }
+      });
+      console.log('Wikipedia search response:', searchResponse.data);
+      if (searchResponse.data.query && searchResponse.data.query.search && searchResponse.data.query.search.length > 0) {
+        const firstResult = searchResponse.data.query.search[0].title;
+        console.log('Found related page:', firstResult);
+        wikiResponse = await axios.get('https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(firstResult));
+        console.log('Wikipedia API response for related page:', wikiResponse.data);
+      }
+    }
+
+    if (wikiResponse.data && wikiResponse.data.extract) {
+      // Truncate to first 2 sentences for brevity
+      definition = wikiResponse.data.extract.split('. ').slice(0, 2).join('. ') + '.' || 'No information found';
+    }
+    console.log('Definition set to:', definition);
     await db.insertSearch(user.id, query, title, definition);
     req.session.message = 'Topic added successfully!';
     req.session.messageType = 'success';
   } catch (err) {
-    console.error('Error adding topic:', err);
-    if (err.response && err.response.status === 404) {
-      // Page not found on Wikipedia, save with placeholder
-      await db.insertSearch(user.id, query, title, definition);
-      req.session.message = 'Topic not found on Wikipedia, but saved with placeholder.';
-      req.session.messageType = 'success';
-    } else {
-      // Other errors (e.g., network issues, API downtime)
-      req.session.message = 'Error adding topic. Please try again later.';
-      req.session.messageType = 'error';
-    }
+    console.error('Error fetching Wikipedia summary:', err.response ? err.response.data : err.message);
+    await db.insertSearch(user.id, query, title, definition);
+    req.session.message = 'Could not fetch description, but topic saved with placeholder.';
+    req.session.messageType = 'success';
   }
   res.redirect('/dashboard');
 });
