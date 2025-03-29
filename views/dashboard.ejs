@@ -6,7 +6,6 @@
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
   <style>
-    /* Add loading overlay styles */
     .loading-overlay {
       display: none;
       position: fixed;
@@ -35,8 +34,6 @@
       opacity: 0.5;
       pointer-events: none;
     }
-
-    /* Truncate long definitions */
     .definition {
       max-height: 3em;
       overflow: hidden;
@@ -54,14 +51,10 @@
     .definition.long ~ .read-more {
       display: inline;
     }
-
-    /* Style for placeholder message */
     .no-info-message {
       color: #888;
       font-style: italic;
     }
-
-    /* Debug section */
     .debug-section {
       display: none;
       margin-top: 20px;
@@ -74,23 +67,25 @@
     }
   </style>
 </head>
-<body>
+<body onload="checkAuth()">
   <div class="container">
     <div class="welcome-header">
       <h1>Welcome, <span class="username"><%= user.displayName %></span>!</h1>
       <a href="/logout" class="button">Log Out</a>
     </div>
 
-    <form action="/dashboard" method="POST" class="search-form" id="searchForm">
+    <form action="/dashboard" method="POST" class="search-form" id="searchForm" enctype="multipart/form-data">
       <label for="query">Topic Query:</label>
       <input type="text" id="query" name="query" placeholder="Enter a topic (e.g., Artificial Intelligence)..." required>
       <label for="title">Topic Title:</label>
       <input type="text" id="title" name="title" placeholder="Enter a title..." required>
+      <label for="image">Upload Image (optional):</label>
+      <input type="file" id="image" name="image" accept="image/*">
       <button type="submit" id="searchButton">Add Topic</button>
     </form>
 
     <div class="clear-form">
-      <form action="/clear-searches" method="POST">
+      <form action="/clear-searches" method="POST" id="clearForm">
         <button type="submit" id="deleteButton">Clear All Topics</button>
       </form>
     </div>
@@ -104,23 +99,44 @@
           <div class="search-result" data-id="<%= search.id %>">
             <h3><%= search.title %></h3>
             <h4>Topic: <%= search.query %></h4>
-            <p class="definition <%= search.definition === 'No information found' ? 'no-info-message' : '' %> <%= search.definition.length > 150 ? 'long' : '' %>">
-              <%= search.definition %>
-              <% if (search.definition === 'No information found') { %>
-                <span>(Try a more specific query, e.g., "Artificial Intelligence")</span>
+            <div class="thumbnail-definition-container">
+              <% if (search.thumbnail) { %>
+                <img src="<%= search.thumbnail %>" alt="Thumbnail" class="thumbnail">
               <% } %>
-            </p>
-            <span class="read-more">Read More</span>
+              <div class="definition-container">
+                <p class="definition <%= search.definition === 'No information found' ? 'no-info-message' : '' %> <%= search.definition.length > 150 ? 'long' : '' %>">
+                  <%= search.definition %>
+                  <% if (search.definition === 'No information found') { %>
+                    <span>(Try a more specific query, e.g., "Artificial Intelligence")</span>
+                  <% } %>
+                </p>
+                <span class="read-more">Read More</span>
+              </div>
+            </div>
+            <% if (search.countryData) { %>
+              <% const country = JSON.parse(search.countryData); %>
+              <div class="country-data">
+                <p><strong>Country:</strong> <%= country.name %></p>
+                <p><strong>Capital:</strong> <%= country.capital %></p>
+                <p><strong>Currency:</strong> <%= country.currency %></p>
+                <p><strong>Flag:</strong> <img src="<%= country.flag %>" alt="Flag"></p>
+              </div>
+            <% } %>
+            <% if (search.imageUrl) { %>
+              <div class="uploaded-image-container">
+                <p><strong>Uploaded Image:</strong></p>
+                <img src="<%= search.imageUrl %>" alt="Uploaded Image" class="uploaded-image">
+              </div>
+            <% } %>
             <div class="timestamp">
               Added on: <%= new Date(Number(search.timestamp)).toLocaleString() %>
             </div>
             <div class="button-group">
               <a href="#" class="button edit-button">Edit</a>
-              <form action="/delete/<%= search.id %>" method="POST" style="display:inline;">
+              <form action="/delete/<%= search.id %>" method="POST" class="delete-form" style="display:inline;">
                 <button type="submit" class="delete-button">Delete</button>
               </form>
             </div>
-            <!-- Debug Info -->
             <div class="debug-info">
               <p><strong>Query:</strong> <%= search.query %></p>
               <p><strong>Definition:</strong> <%= search.definition %></p>
@@ -130,7 +146,6 @@
       </div>
     <% } %>
 
-    <!-- Toast Notification -->
     <div class="toast-container">
       <% if (message) { %>
         <div class="toast <%= messageType === 'success' ? 'toast-success' : 'toast-error' %> show">
@@ -139,12 +154,10 @@
       <% } %>
     </div>
 
-    <!-- Loading Overlay -->
     <div class="loading-overlay" id="loadingOverlay">
       <div class="loading-spinner"></div>
     </div>
 
-    <!-- Modal for Editing -->
     <div class="modal" id="editModal">
       <div class="modal-content">
         <span class="close">×</span>
@@ -162,7 +175,6 @@
       </div>
     </div>
 
-    <!-- Debug Toggle -->
     <div style="margin-top: 20px;">
       <button id="toggleDebug" class="button">Toggle Debug Info</button>
     </div>
@@ -173,22 +185,121 @@
   </div>
 
   <script>
+    function checkAuth() {
+      const token = sessionStorage.getItem('token');
+      if (!token) {
+        window.location.href = '/login';
+        return;
+      }
+
+      fetch('/dashboard', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      }).then(response => {
+        if (!response.ok) {
+          sessionStorage.removeItem('token');
+          window.location.href = '/login';
+        }
+      }).catch(err => {
+        console.error('Error loading dashboard:', err);
+        sessionStorage.removeItem('token');
+        window.location.href = '/login';
+      });
+    }
+
     const searchForm = document.getElementById('searchForm');
     const searchButton = document.getElementById('searchButton');
     const loadingOverlay = document.getElementById('loadingOverlay');
+    const clearForm = document.getElementById('clearForm');
+    const deleteForms = document.querySelectorAll('.delete-form');
+    const editForm = document.getElementById('editForm');
 
-    // Show loading overlay when form is submitted
-    searchForm.addEventListener('submit', () => {
+    const addTokenToRequest = (form, method, url) => {
+      const token = sessionStorage.getItem('token');
+      if (!token) {
+        window.location.href = '/login';
+        return Promise.reject('No token found');
+      }
+      const formData = new FormData(form);
+      return fetch(url, {
+        method: method,
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: formData
+      });
+    };
+
+    searchForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
       searchButton.classList.add('loading');
       searchForm.classList.add('disabled');
       loadingOverlay.style.display = 'flex';
+      try {
+        const response = await addTokenToRequest(searchForm, 'POST', '/dashboard');
+        if (response.redirected) {
+          window.location.href = response.url;
+        } else {
+          window.location.href = '/login';
+        }
+      } catch (err) {
+        console.error('Error adding topic:', err);
+        window.location.href = '/login';
+      }
     });
 
-    // Modal for editing
+    clearForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const response = await addTokenToRequest(clearForm, 'POST', '/clear-searches');
+        if (response.redirected) {
+          window.location.href = response.url;
+        } else {
+          window.location.href = '/login';
+        }
+      } catch (err) {
+        console.error('Error clearing topics:', err);
+        window.location.href = '/login';
+      }
+    });
+
+    deleteForms.forEach(form => {
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try {
+          const response = await addTokenToRequest(form, 'POST', form.action);
+          if (response.redirected) {
+            window.location.href = response.url;
+          } else {
+            window.location.href = '/login';
+          }
+        } catch (err) {
+          console.error('Error deleting topic:', err);
+          window.location.href = '/login';
+        }
+      });
+    });
+
+    editForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const response = await addTokenToRequest(editForm, 'POST', editForm.action);
+        if (response.redirected) {
+          window.location.href = response.url;
+        } else {
+          window.location.href = '/login';
+        }
+      } catch (err) {
+        console.error('Error editing topic:', err);
+        window.location.href = '/login';
+      }
+    });
+
     const modal = document.getElementById('editModal');
     const closeButtons = document.querySelectorAll('.close');
     const editButtons = document.querySelectorAll('.edit-button');
-    const editForm = document.getElementById('editForm');
 
     editButtons.forEach(button => {
       button.addEventListener('click', (e) => {
@@ -223,7 +334,6 @@
       }
     });
 
-    // Toast notification
     const toast = document.querySelector('.toast');
     if (toast) {
       setTimeout(() => {
@@ -231,7 +341,6 @@
       }, 3000);
     }
 
-    // Read More toggle for long definitions
     document.querySelectorAll('.read-more').forEach(button => {
       button.addEventListener('click', () => {
         const definition = button.previousElementSibling;
@@ -240,7 +349,6 @@
       });
     });
 
-    // Toggle debug info
     const toggleDebugButton = document.getElementById('toggleDebug');
     const debugSection = document.getElementById('debugSection');
     toggleDebugButton.addEventListener('click', () => {
