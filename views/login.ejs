@@ -37,5 +37,30 @@
       <span class="google-icon">G</span> Sign in with Google
     </a>
   </div>
+
+  <script>
+    // Check if we're on localhost but the app is actually deployed to production
+    function checkEnvironment() {
+      const hostname = window.location.hostname;
+      const referrer = document.referrer;
+      
+      // If we're on localhost and came from the production URL 
+      // or we have a special flag in localStorage
+      if (hostname === 'localhost' && 
+          (referrer.includes('railway.app') || localStorage.getItem('useProduction'))) {
+        
+        // Store a flag so we know to redirect in the future
+        localStorage.setItem('useProduction', 'true');
+        
+        // Show a message to the user
+        if (confirm('It appears you\'re accessing the local version but your app is deployed to production. Would you like to go to the production version?')) {
+          window.location.href = 'https://mysearch-hub-production.up.railway.app' + window.location.pathname;
+        }
+      }
+    }
+    
+    // Run the check when the page loads
+    checkEnvironment();
+  </script>
 </body>
 </html>

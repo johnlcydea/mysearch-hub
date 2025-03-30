@@ -1,12 +1,17 @@
+require('dotenv').config();
 const express = require('express');
+const path = require('path');
 const session = require('express-session');
-const bcrypt = require('bcrypt');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const { Database } = require('./database');
 const axios = require('axios');
-require('dotenv').config();
+const multer = require('multer');
+const cookieParser = require('cookie-parser');
 
+// Initialize app
 const app = express();
 const db = new Database();
 
@@ -15,23 +20,62 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
 app.set('view engine', 'ejs');
 
+// Add this near the top of your file
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  next();
+});
+
+// Middleware for production
+app.set('trust proxy', 1); // Trust first proxy for Railway
+
+// Add this middleware for production redirects
+if (process.env.NODE_ENV === 'production') {
+  app.use((req, res, next) => {
+    if (req.headers['x-forwarded-proto'] !== 'https') {
+      return res.redirect(`https://${req.headers.host}${req.url}`);
+    }
+    next();
+  });
+}
+
 // Session configuration
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'your-secret-key',
+  secret: process.env.SESSION_SECRET || 'default-session-secret',
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: false }
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
 }));
 
-// Passport configuration
+// Initialize passport
 app.use(passport.initialize());
 app.use(passport.session());
+app.use(cookieParser());
+
+// Update your existing callback URL definition
+const callbackURL = (() => {
+  // Default development callback
+  let url = 'http://localhost:3000/auth/google/callback';
+  
+  // If in production, use the Railway URL
+  if (process.env.NODE_ENV === 'production') {
+    url = 'https://mysearch-hub-production.up.railway.app/auth/google/callback';
+  }
+  
+  console.log('Using Google callback URL:', url);
+  return url;
+})();
 
 passport.use(new GoogleStrategy({
   clientID: process.env.GOOGLE_CLIENT_ID,
   clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-  callbackURL: 'http://localhost:3000/auth/google/callback'
+  callbackURL: callbackURL
 }, async (accessToken, refreshToken, profile, done) => {
+  console.log('Google OAuth callback received. Profile:', profile.id, profile.displayName);
   try {
     let user = await db.findUserByUsername(profile.id);
     if (!user) {
@@ -152,21 +196,79 @@ app.post('/register', async (req, res) => {
   }
 });
 
-app.get('/auth/google',
-  passport.authenticate('google', { scope: ['profile'] })
-);
+// Update your existing Google auth route
+app.get('/auth/google', (req, res, next) => {
+  // Store the current environment and redirect preference
+  req.session.authEnv = process.env.NODE_ENV || 'development';
+  req.session.authRedirect = req.query.redirect || 'development';
+  
+  // Log the auth attempt
+  console.log(`Starting Google auth in ${req.session.authEnv} environment`);
+  console.log(`Using callback URL: ${callbackURL}`);
+  console.log(`Redirect preference: ${req.session.authRedirect}`);
+  
+  passport.authenticate('google', { 
+    scope: ['profile'],
+    callbackURL: callbackURL
+  })(req, res, next);
+});
 
-app.get('/auth/google/callback',
-  passport.authenticate('google', { failureRedirect: '/login' }),
-  (req, res) => {
-    req.session.user = { 
-      id: req.user.id, 
-      username: req.user.username, 
-      displayName: req.user.displayName || req.user.username 
-    };
-    res.redirect('/dashboard');
+// Update your callback route
+app.get('/auth/google/callback', (req, res, next) => {
+  console.log('Google callback received. Query params:', req.query);
+  console.log('Auth environment:', req.session?.authEnv || 'unknown');
+  console.log('Redirect preference:', req.session?.authRedirect || 'unknown');
+  
+  // Check if we're on localhost but should be on production
+  if (req.hostname === 'localhost' && 
+      req.session?.authRedirect === 'production') {
+    console.log('Environment mismatch detected - redirecting to production');
+    return res.redirect('/local-to-prod-redirect' + req.url.replace('/auth/google/callback', ''));
   }
-);
+  
+  // Continue with normal authentication
+  passport.authenticate('google', { 
+    failureRedirect: '/login',
+    callbackURL: callbackURL
+  }, (err, user, info) => {
+    if (err) {
+      console.error('Google auth error:', err);
+      return res.redirect('/login');
+    }
+    
+    if (!user) {
+      console.error('No user returned from Google auth. Info:', info);
+      return res.redirect('/login');
+    }
+    
+    // Log the user object
+    console.log('Google auth successful. User:', user);
+    
+    // Login the user
+    req.login(user, (err) => {
+      if (err) {
+        console.error('Error in req.login:', err);
+        return res.redirect('/login');
+      }
+      
+      // Ensure user is properly stored in session
+      req.session.user = { 
+        id: user.id, 
+        username: user.username, 
+        displayName: user.displayName || user.username 
+      };
+      
+      // Make sure session is saved before redirecting
+      req.session.save((err) => {
+        if (err) {
+          console.error('Error saving session:', err);
+        }
+        console.log('Redirecting to dashboard after successful Google auth');
+        res.redirect('/dashboard');
+      });
+    });
+  })(req, res, next);
+});
 
 app.get('/dashboard', isAuthenticated, async (req, res) => {
   try {
@@ -292,7 +394,37 @@ app.get('/logout', (req, res) => {
   });
 });
 
-// Start the server
+// Add this route to help with redirection between environments
+app.get('/redirect', (req, res) => {
+  res.render('redirect');
+});
+
+// Handle case when we hit localhost callback in a production environment
+app.get('/local-to-prod-redirect', (req, res) => {
+  // Copy all query parameters from the original request
+  const queryString = Object.keys(req.query)
+    .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(req.query[key])}`)
+    .join('&');
+  
+  // Log the redirect attempt
+  console.log('Redirecting from localhost to production. Query params:', req.query);
+  
+  // Redirect to the production URL with the same query parameters
+  const productionURL = `https://mysearch-hub-production.up.railway.app/auth/google/callback?${queryString}`;
+  
+  res.render('redirect', { productionURL });
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).render('error', { 
+    message: 'An error occurred', 
+    error: process.env.NODE_ENV === 'production' ? {} : err 
+  });
+});
+
+// At the bottom of your app.js file
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

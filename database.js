@@ -1,198 +1,244 @@
 const sqlite3 = require('sqlite3').verbose();
+require('dotenv').config();
 
 class Database {
   constructor() {
-    this.db = new sqlite3.Database('database.db', (err) => {
-      if (err) {
-        console.error('Error opening database:', err.message);
-      } else {
-        console.log('Connected to SQLite database.');
-        this.initialize();
-      }
-    });
+    if (process.env.DATABASE_URL) {
+      // Use PostgreSQL in production
+      this.usePostgres = true;
+      const { Pool } = require('pg');
+      this.pool = new Pool({
+        connectionString: process.env.DATABASE_URL,
+        ssl: { rejectUnauthorized: false }
+      });
+      console.log('Connected to PostgreSQL database.');
+      this.initTables();
+    } else {
+      // Use SQLite in development
+      this.usePostgres = false;
+      this.db = new sqlite3.Database('./database.sqlite');
+      console.log('Connected to SQLite database.');
+      this.initTables();
+    }
   }
 
-  initialize() {
-    // Drop the existing users table to recreate it with the new schema
-    this.db.run('DROP TABLE IF EXISTS users', (err) => {
-      if (err) {
-        console.error('Error dropping users table:', err.message);
-      }
-    });
-
-    this.db.run(`
-      CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE NOT NULL,
-        password TEXT NOT NULL,
-        displayName TEXT
-      )
-    `);
-
-    this.db.run(`
-      CREATE TABLE IF NOT EXISTS searches (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id TEXT NOT NULL,
-        query TEXT NOT NULL,
-        title TEXT NOT NULL,
-        definition TEXT NOT NULL,
-        timestamp INTEGER NOT NULL
-      )
-    `);
+  async initTables() {
+    if (this.usePostgres) {
+      await this.pool.query(`
+        CREATE TABLE IF NOT EXISTS users (
+          id SERIAL PRIMARY KEY,
+          username TEXT UNIQUE NOT NULL,
+          password TEXT NOT NULL,
+          "displayName" TEXT
+        )
+      `);
+      
+      await this.pool.query(`
+        CREATE TABLE IF NOT EXISTS searches (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER NOT NULL,
+          query TEXT NOT NULL,
+          title TEXT NOT NULL,
+          definition TEXT,
+          thumbnail TEXT,
+          image_url TEXT,
+          timestamp BIGINT
+        )
+      `);
+    } else {
+      this.db.serialize(() => {
+        this.db.run(`
+          CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            displayName TEXT
+          )
+        `);
+        
+        this.db.run(`
+          CREATE TABLE IF NOT EXISTS searches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            query TEXT NOT NULL,
+            title TEXT NOT NULL,
+            definition TEXT,
+            thumbnail TEXT,
+            image_url TEXT,
+            timestamp INTEGER
+          )
+        `);
+      });
+    }
   }
 
-  async registerUser(username, password, displayName = username) {
-    return new Promise((resolve, reject) => {
-      this.db.run(
-        'INSERT INTO users (username, password, displayName) VALUES (?, ?, ?)',
-        [username, password, displayName],
-        function (err) {
-          if (err) {
-            reject(err);
-          } else {
+  // User methods
+  async registerUser(username, password, displayName = null) {
+    if (this.usePostgres) {
+      const result = await this.pool.query(
+        'INSERT INTO users (username, password, "displayName") VALUES ($1, $2, $3) RETURNING id',
+        [username, password, displayName]
+      );
+      return result.rows[0].id;
+    } else {
+      return new Promise((resolve, reject) => {
+        this.db.run(
+          'INSERT INTO users (username, password, displayName) VALUES (?, ?, ?)',
+          [username, password, displayName],
+          function(err) {
+            if (err) reject(err);
             resolve(this.lastID);
           }
-        }
-      );
-    });
+        );
+      });
+    }
   }
 
   async findUserByUsername(username) {
-    return new Promise((resolve, reject) => {
-      this.db.get(
-        'SELECT * FROM users WHERE username = ?',
-        [username],
-        (err, row) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve(row);
-          }
-        }
+    if (this.usePostgres) {
+      const result = await this.pool.query(
+        'SELECT id, username, password, "displayName" FROM users WHERE username = $1',
+        [username]
       );
-    });
+      return result.rows[0] || null;
+    } else {
+      return new Promise((resolve, reject) => {
+        this.db.get(
+          'SELECT id, username, password, displayName FROM users WHERE username = ?',
+          [username],
+          (err, row) => {
+            if (err) reject(err);
+            resolve(row || null);
+          }
+        );
+      });
+    }
   }
 
   async findUserById(id) {
-    return new Promise((resolve, reject) => {
-      this.db.get(
-        'SELECT * FROM users WHERE id = ?',
-        [id],
-        (err, row) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve(row);
-          }
-        }
+    if (this.usePostgres) {
+      const result = await this.pool.query(
+        'SELECT id, username, password, "displayName" FROM users WHERE id = $1',
+        [id]
       );
-    });
+      return result.rows[0] || null;
+    } else {
+      return new Promise((resolve, reject) => {
+        this.db.get(
+          'SELECT id, username, password, displayName FROM users WHERE id = ?',
+          [id],
+          (err, row) => {
+            if (err) reject(err);
+            resolve(row || null);
+          }
+        );
+      });
+    }
   }
 
-  async insertSearch(userId, query, title, definition) {
+  // Search methods
+  async insertSearch(userId, query, title, definition, thumbnail = null, imageUrl = null) {
     const timestamp = Date.now();
-    return new Promise((resolve, reject) => {
-      this.db.run(
-        'INSERT INTO searches (user_id, query, title, definition, timestamp) VALUES (?, ?, ?, ?, ?)',
-        [userId, query, title, definition, timestamp],
-        function (err) {
-          if (err) {
-            reject(err);
-          } else {
+    
+    if (this.usePostgres) {
+      const result = await this.pool.query(
+        'INSERT INTO searches (user_id, query, title, definition, thumbnail, image_url, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
+        [userId, query, title, definition, thumbnail, imageUrl, timestamp]
+      );
+      return result.rows[0].id;
+    } else {
+      return new Promise((resolve, reject) => {
+        this.db.run(
+          'INSERT INTO searches (user_id, query, title, definition, thumbnail, image_url, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [userId, query, title, definition, thumbnail, imageUrl, timestamp],
+          function(err) {
+            if (err) reject(err);
             resolve(this.lastID);
           }
-        }
-      );
-    });
+        );
+      });
+    }
   }
 
   async getSearches(userId) {
-    return new Promise((resolve, reject) => {
-      this.db.all(
-        'SELECT * FROM searches WHERE user_id = ? ORDER BY timestamp DESC',
-        [userId],
-        (err, rows) => {
-          if (err) {
-            reject(err);
-          } else {
-            const searches = rows.map(row => ({
-              ...row,
-              timestamp: Number(row.timestamp)
-            }));
-            resolve(searches);
-          }
-        }
+    if (this.usePostgres) {
+      const result = await this.pool.query(
+        'SELECT * FROM searches WHERE user_id = $1 ORDER BY timestamp DESC',
+        [userId]
       );
-    });
+      return result.rows;
+    } else {
+      return new Promise((resolve, reject) => {
+        this.db.all(
+          'SELECT * FROM searches WHERE user_id = ? ORDER BY timestamp DESC',
+          [userId],
+          (err, rows) => {
+            if (err) reject(err);
+            resolve(rows || []);
+          }
+        );
+      });
+    }
   }
 
   async updateSearchTitle(id, title) {
-    return new Promise((resolve, reject) => {
-      this.db.run(
-        'UPDATE searches SET title = ? WHERE id = ?',
-        [title, id],
-        function (err) {
-          if (err) {
-            reject(err);
-          } else {
-            if (this.changes === 0) {
-              reject(new Error('No search found with the given ID'));
-            } else {
-              resolve();
-            }
-          }
-        }
+    if (this.usePostgres) {
+      await this.pool.query(
+        'UPDATE searches SET title = $1 WHERE id = $2',
+        [title, id]
       );
-    });
+    } else {
+      return new Promise((resolve, reject) => {
+        this.db.run(
+          'UPDATE searches SET title = ? WHERE id = ?',
+          [title, id],
+          (err) => {
+            if (err) reject(err);
+            resolve();
+          }
+        );
+      });
+    }
   }
 
   async deleteSearch(id) {
-    return new Promise((resolve, reject) => {
-      this.db.run(
-        'DELETE FROM searches WHERE id = ?',
-        [id],
-        function (err) {
-          if (err) {
-            reject(err);
-          } else {
-            if (this.changes === 0) {
-              reject(new Error('No search found with the given ID'));
-            } else {
-              resolve();
-            }
-          }
-        }
+    if (this.usePostgres) {
+      await this.pool.query(
+        'DELETE FROM searches WHERE id = $1',
+        [id]
       );
-    });
+    } else {
+      return new Promise((resolve, reject) => {
+        this.db.run(
+          'DELETE FROM searches WHERE id = ?',
+          [id],
+          (err) => {
+            if (err) reject(err);
+            resolve();
+          }
+        );
+      });
+    }
   }
 
   async clearSearches(userId) {
-    return new Promise((resolve, reject) => {
-      this.db.run(
-        'DELETE FROM searches WHERE user_id = ?',
-        [userId],
-        function (err) {
-          if (err) {
-            reject(err);
-          } else {
+    if (this.usePostgres) {
+      await this.pool.query(
+        'DELETE FROM searches WHERE user_id = $1',
+        [userId]
+      );
+    } else {
+      return new Promise((resolve, reject) => {
+        this.db.run(
+          'DELETE FROM searches WHERE user_id = ?',
+          [userId],
+          (err) => {
+            if (err) reject(err);
             resolve();
           }
-        }
-      );
-    });
-  }
-
-  close() {
-    return new Promise((resolve, reject) => {
-      this.db.close((err) => {
-        if (err) {
-          reject(err);
-        } else {
-          console.log('Database connection closed.');
-          resolve();
-        }
+        );
       });
-    });
+    }
   }
 }
 
