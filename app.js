@@ -6,14 +6,34 @@ const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { Database } = require('./database');
 const axios = require('axios');
 const multer = require('multer');
 const cookieParser = require('cookie-parser');
+const { Pool } = require('pg');
+const sqlite3 = require('sqlite3').verbose();
+
+// At the start of your file, after requires
+// Ensure NODE_ENV is set to production on Railway
+if (process.env.RAILWAY_SERVICE_ID) {
+  process.env.NODE_ENV = 'production';
+  console.log('Running on Railway - setting NODE_ENV to production');
+}
+console.log(`Running in ${process.env.NODE_ENV || 'development'} environment`);
+
+// At the start of your app.js file
+let db;
+try {
+  const { Database } = require('./database');
+  db = new Database();
+  console.log('Database initialized successfully');
+} catch (err) {
+  console.error('Failed to initialize database:', err);
+  // You might want to exit the process here if the database is critical
+  // process.exit(1);
+}
 
 // Initialize app
 const app = express();
-const db = new Database();
 
 // Middleware
 app.use(express.urlencoded({ extended: true }));
@@ -39,8 +59,39 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
+// Replace your session store code with this
+let sessionStore;
+if (process.env.NODE_ENV === 'production' && process.env.DATABASE_URL) {
+  try {
+    console.log('Using PostgreSQL session store for production');
+    const pgSession = require('connect-pg-simple')(session);
+    const { Pool } = require('pg');
+    
+    // Create a dedicated pool for sessions to avoid connection issues
+    const sessionPool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false }
+    });
+    
+    sessionStore = new pgSession({
+      pool: sessionPool,
+      tableName: 'session',
+      createTableIfMissing: true
+    });
+    console.log('PostgreSQL session store initialized');
+  } catch (err) {
+    console.error('Failed to initialize PostgreSQL session store:', err);
+    console.log('Falling back to memory store');
+    sessionStore = new session.MemoryStore();
+  }
+} else {
+  console.log('Using memory session store for development');
+  sessionStore = new session.MemoryStore();
+}
+
 // Session configuration
 app.use(session({
+  store: sessionStore,
   secret: process.env.SESSION_SECRET || 'default-session-secret',
   resave: false,
   saveUninitialized: false,
@@ -415,13 +466,83 @@ app.get('/local-to-prod-redirect', (req, res) => {
   res.render('redirect', { productionURL });
 });
 
-// Global error handler
+// Add this near your other routes
+app.get('/health', (req, res) => {
+  try {
+    const health = {
+      uptime: process.uptime(),
+      message: 'OK',
+      timestamp: Date.now(),
+      env: process.env.NODE_ENV || 'development',
+      database: {
+        type: process.env.DATABASE_URL ? 'PostgreSQL' : 'SQLite',
+        url: process.env.DATABASE_URL ? '(redacted)' : 'local SQLite',
+        connected: db.usePostgres ? (db.pool ? true : false) : (db.db ? true : false)
+      }
+    };
+    res.status(200).json(health);
+  } catch (err) {
+    console.error('Health check error:', err);
+    res.status(500).json({ status: 'ERROR', message: err.message });
+  }
+});
+
+// Add this near the end, before the error handler
+app.use((req, res) => {
+  res.status(404).send(`
+    <html>
+      <head>
+        <title>Page Not Found</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 20px; }
+          .container { max-width: 800px; margin: 0 auto; }
+          h1 { color: #31708f; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>Page Not Found</h1>
+          <p>The page you're looking for doesn't exist.</p>
+          <p><a href="/login">Return to login</a></p>
+        </div>
+      </body>
+    </html>
+  `);
+});
+
+// Replace your current error handler with this one
 app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
-  res.status(500).render('error', { 
-    message: 'An error occurred', 
-    error: process.env.NODE_ENV === 'production' ? {} : err 
-  });
+  console.error('Express error:', err);
+  
+  // Try to render the error page
+  try {
+    res.status(500).render('error', {
+      message: 'An error occurred while processing your request',
+      stack: process.env.NODE_ENV === 'production' ? null : err.stack
+    });
+  } catch (renderErr) {
+    // If error view rendering fails, send a basic response
+    console.error('Error rendering error view:', renderErr);
+    res.status(500).send(`
+      <html>
+        <head>
+          <title>Error</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 20px; }
+            .container { max-width: 800px; margin: 0 auto; }
+            h1 { color: #d9534f; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>Something went wrong</h1>
+            <p>We're sorry, but we encountered an error processing your request.</p>
+            <p><a href="/login">Return to login</a></p>
+          </div>
+        </body>
+      </html>
+    `);
+  }
 });
 
 // At the bottom of your app.js file
@@ -429,3 +550,22 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+if (process.env.DATABASE_URL) {
+  // PostgreSQL for production
+  console.log('Connecting to PostgreSQL database...');
+  this.usePostgres = true;
+  this.pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+  });
+  // Initialize tables for PostgreSQL
+  // ...
+} else {
+  // SQLite for development
+  console.log('Connecting to SQLite database...');
+  this.usePostgres = false;
+  this.db = new sqlite3.Database('./database.sqlite');
+  // Initialize tables for SQLite
+  // ...
+}

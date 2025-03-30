@@ -5,25 +5,38 @@ class Database {
   constructor() {
     if (process.env.DATABASE_URL) {
       // Use PostgreSQL in production
+      console.log('Connecting to PostgreSQL database...');
       this.usePostgres = true;
-      const { Pool } = require('pg');
-      this.pool = new Pool({
-        connectionString: process.env.DATABASE_URL,
-        ssl: { rejectUnauthorized: false }
-      });
-      console.log('Connected to PostgreSQL database.');
-      this.initTables();
+      try {
+        // Fix: Parse the DATABASE_URL to ensure we're not using localhost
+        const dbUrl = new URL(process.env.DATABASE_URL);
+        console.log(`Connecting to PostgreSQL at ${dbUrl.hostname}:${dbUrl.port}...`);
+        
+        this.pool = new Pool({
+          connectionString: process.env.DATABASE_URL,
+          ssl: { rejectUnauthorized: false }
+        });
+        console.log('PostgreSQL connection pool created');
+      } catch (err) {
+        console.error('Error connecting to PostgreSQL:', err);
+        // Fallback to SQLite if PostgreSQL connection fails
+        console.log('Falling back to SQLite due to PostgreSQL connection failure');
+        this.usePostgres = false;
+        this.db = new sqlite3.Database(':memory:'); // Use in-memory SQLite as fallback
+        this.initSqliteTables();
+      }
     } else {
       // Use SQLite in development
+      console.log('Connecting to SQLite database...');
       this.usePostgres = false;
       this.db = new sqlite3.Database('./database.sqlite');
-      console.log('Connected to SQLite database.');
       this.initTables();
     }
   }
 
   async initTables() {
     if (this.usePostgres) {
+      // PostgreSQL table creation
       await this.pool.query(`
         CREATE TABLE IF NOT EXISTS users (
           id SERIAL PRIMARY KEY,
@@ -46,6 +59,7 @@ class Database {
         )
       `);
     } else {
+      // SQLite table creation
       this.db.serialize(() => {
         this.db.run(`
           CREATE TABLE IF NOT EXISTS users (

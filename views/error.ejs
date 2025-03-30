@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Error</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background-color: #f5f5f5;
+    }
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background-color: white;
+      padding: 20px;
+      border-radius: 5px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #d9534f;
+    }
+    .action-buttons {
+      margin-top: 20px;
+    }
+    .action-buttons a {
+      display: inline-block;
+      margin-right: 10px;
+      padding: 8px 16px;
+      background-color: #5bc0de;
+      color: white;
+      text-decoration: none;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Something went wrong</h1>
+    <p>We're sorry, but we encountered an error processing your request.</p>
+    
+    <% if (typeof message !== 'undefined') { %>
+      <p><strong>Message:</strong> <%= message %></p>
+    <% } %>
+    
+    <% if (typeof stack !== 'undefined' && process.env.NODE_ENV !== 'production') { %>
+      <h2>Error Details</h2>
+      <pre><%= stack %></pre>
+    <% } %>
+    
+    <div class="action-buttons">
+      <a href="/">Home</a>
+      <a href="/login">Login</a>
+    </div>
+  </div>
+</body>
+</html>
