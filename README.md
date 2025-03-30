@@ -86,27 +86,3 @@ The application is deployed and accessible at: [https://mysearch-hub-production.
    ```bash
    npm start
    ```
-
-## Project Structure
-
-mysearch-hub/
-├── [app.js](http://_vscodecontentref_/1)                  # Main application entry point
-├── [database.js](http://_vscodecontentref_/2)             # Database configuration and models
-├── public/                 # Static assets
-│   ├── css/                # Stylesheets
-│   ├── js/                 # Client-side JavaScript
-│   └── images/             # Images and icons
-├── views/                  # EJS templates
-│   ├── dashboard.ejs       # Main user interface
-│   ├── login.ejs           # Login page
-│   ├── [register.ejs](http://_vscodecontentref_/3)        # Registration page
-│   ├── error.ejs           # Error page
-│   └── redirect.ejs        # OAuth redirect handler
-├── node_modules/           # Dependencies
-├── [package.json](http://_vscodecontentref_/4)            # Project metadata and dependencies
-├── [package-lock.json](http://_vscodecontentref_/5)       # Dependency lock file
-├── .env                    # Environment variables (not in version control)
-├── .gitignore              # Git ignore file
-├── Procfile                # Process file for Railway
-├── [nixpacks.toml](http://_vscodecontentref_/6)           # Nixpacks configuration
-└── [README.md](http://_vscodecontentref_/7)               # Project documentation
